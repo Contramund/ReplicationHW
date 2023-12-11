@@ -40,7 +40,32 @@ func (s *TManager) getDiff(from map[string]uint64) ([]transaction, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	// TODO: get diff
+	done := make(map[string]bool)
+	ans := make(map[string]transaction)
+
+	out:
+	for i := len(s.journal) - 1; i >= 0; i-- {
+		tr := s.journal[i]
+		// TODO: check if exists
+		if from[tr.Source] < tr.Id {
+			if oldVal, ok := ans[tr.Source]; ok {
+				// TODO: merge transactions in order
+			} else {
+				ans[tr.Source] = tr
+			}
+		} else {
+			done[tr.Source] = true
+
+			for s := range from {
+				if done[s] != true {
+					continue out
+				}
+			}
+			break
+		}
+	}
+	// TODO: add transactions for sources that were not present in from
+	// TODO: transform to array
 	return []transaction{}, nil
 }
 
