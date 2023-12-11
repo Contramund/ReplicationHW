@@ -18,12 +18,18 @@ type replicationServer struct {
 	nickname string
 }
 
-func (cs *replicationServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	cs.serveMux.ServeHTTP(w, r)
+func logRequest(req *http.Request, route string) {
+	log.Printf("Incoming command on route '%v'.\nHeaders: %v.\nBody: %v\n\n", route, req.Header, req.Body)
 }
 
+func (cs *replicationServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Incoming request: %v", r.Method)
+	cs.serveMux.ServeHTTP(w, r)
+}
+// [{"op":"replace", "path":"Contramund","value": []}]
 func getTestHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
+		logRequest(req, "/test")
 		rw.WriteHeader(http.StatusOK)
 		rw.Write(indexFile)
 	}
@@ -31,6 +37,7 @@ func getTestHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 
 func getVclockHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
+		logRequest(req, "/vclock")
 		pureAns := tm.getVClock()
 		jsonAns, mErr := json.Marshal(pureAns)
 		if mErr != nil {
@@ -45,6 +52,7 @@ func getVclockHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 
 func getPostHandler(tm *TManager, pipe chan<- transaction, nickname string) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
+		logRequest(req, "/post")
 		localTime := tm.getVClock()[nickname]
 		patch, rErr := io.ReadAll(req.Body)
 		if rErr != nil {
@@ -63,6 +71,7 @@ func getPostHandler(tm *TManager, pipe chan<- transaction, nickname string) func
 
 func getGetHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
+		logRequest(req, "/get")
 		rw.WriteHeader(http.StatusOK)
 		rw.Header().Set("Content-Type", "application/json")
 		rw.Write(tm.getSnap()) // getSnap couldn't fail
@@ -71,13 +80,12 @@ func getGetHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 
 func getWsHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
+		logRequest(req, "/ws")
 		pureVClock := req.Header.Get("VClock")
 		var VClockIn map[string]uint64
 
 		if pureVClock == "" {
-			rw.WriteHeader(200)
-			rw.Header().Set("Content-Type", "application/json")
-			rw.Write([]byte("{}"))
+			pureVClock = "{}"
 		}
 
 		umErr := json.Unmarshal([]byte(pureVClock), &VClockIn)

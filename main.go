@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"io"
 	"log"
 	"net"
@@ -10,16 +11,35 @@ import (
 	"os"
 	"os/signal"
 	"time"
+
 	"nhooyr.io/websocket"
 )
 
-func runReplicationClient(ctx context.Context, pipe chan<- transaction, peer string) {
+func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transaction, peer string) {
+	loop:
 	for {
-		c, resp, err := websocket.Dial(ctx, peer, nil)
+		select {
+		case end := <- ctx.Done():
+			log.Printf("Ending replication client '%v' due to context: %v", peer, end)
+			break loop
+		default:
+		}
+
+		vclockIn, mErr := json.Marshal(tm.getVClock())
+		if mErr != nil {
+			log.Printf("Cannot marshall vclock: %v", mErr)
+			continue
+		}
+
+		opts := websocket.DialOptions{
+			HTTPHeader: http.Header{"VClock": []string{string(vclockIn)}},
+		}
+		c, resp, err := websocket.Dial(ctx, peer, &opts)
 		if err != nil {
 			log.Printf("Cannot connect to %v", peer)
 			time.Sleep(3 * time.Second)
 			c.CloseNow()
+			continue
 		}
 
 		// process resp
@@ -47,8 +67,9 @@ func runReplicationClient(ctx context.Context, pipe chan<- transaction, peer str
 
 func main() {
 	// Parse CMD options
-	addr := ""
-	peers := []string{}
+	addr := *flag.String("p", "127.0.0.1:8080", "set a port for server to run on")
+	nickname := *flag.String("n", "Contramund", "set a name for your server in the system")
+	peers := flag.Args()
 
 	// Init transaction manager
 	tm, tmErr := NewTManager()
@@ -62,7 +83,7 @@ func main() {
 	ctxWithCancel, cancelClient := context.WithCancel(context.Background())
 	defer cancelClient()
 	for _, peer := range peers {
-		go runReplicationClient(ctxWithCancel, tmPipe, peer)
+		go runReplicationClient(ctxWithCancel, &tm, tmPipe, peer)
 	}
 
 	// Setup replication server
@@ -72,7 +93,7 @@ func main() {
 	}
 	log.Printf("listening on http://%v", l.Addr())
 
-	rs := newReplicationServer(&tm, tmPipe)
+	rs := newReplicationServer(&tm, tmPipe, nickname)
 	s := &http.Server{
 		Handler:      rs,
 		ReadTimeout:  time.Second * 10,
