@@ -34,26 +34,32 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 		opts := websocket.DialOptions{
 			HTTPHeader: http.Header{"VClock": []string{string(vclockIn)}},
 		}
-		c, resp, err := websocket.Dial(ctx, peer, &opts)
+		_, resp, err := websocket.Dial(ctx, "ws://" + peer + "/ws", &opts)
 		if err != nil {
-			log.Printf("Cannot connect to %v", peer)
+			log.Printf("Cannot connect to %v: %v", peer, err)
 			time.Sleep(3 * time.Second)
-			c.CloseNow()
+			// c.CloseNow()
 			continue
 		}
 
 		// process resp
+		if resp.Body == nil {
+			log.Printf("Nil-body response: %v", resp)
+			// c.CloseNow()
+			continue
+		}
+
 		body, bErr := io.ReadAll(resp.Body)
 		if bErr != nil {
 			log.Printf("Cannot read body: %v", bErr)
-			c.CloseNow()
+			// c.CloseNow()
 			continue
 		}
 		var updates []transaction
 		umErr := json.Unmarshal(body, &updates)
 		if umErr != nil {
 			log.Printf("Cannot unmarshall body: %v", umErr)
-			c.CloseNow()
+			// c.CloseNow()
 			continue
 		}
 
@@ -61,15 +67,25 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 			pipe <- tr
 		}
 
-		c.CloseNow()
+		// c.CloseNow()
 	}
 }
 
 func main() {
 	// Parse CMD options
-	addr := *flag.String("p", "localhost:8080", "set a port for server to run on")
-	nickname := *flag.String("n", "Contramund", "set a name for your server in the system")
+	addrPtr := flag.String("p", "localhost:8080", "set a port for server to run on")
+	nicknamePtr := flag.String("n", "Contramund", "set a name for your server in the system")
+
+	flag.Parse()
+
+	addr := *addrPtr
+	nickname := *nicknamePtr
 	peers := flag.Args()
+
+	log.Printf("Starting with nickname \"%v\" connecting to ports:\n", nickname)
+	for peer := range peers {
+		log.Printf("-> %v", peer)
+	}
 
 	// Init transaction manager
 	tm, tmErr := NewTManager()

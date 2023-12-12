@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+
 	jsonpatch "github.com/evanphx/json-patch/v5"
 )
 
@@ -43,7 +44,7 @@ func (s *TManager) getDiff(from map[string]uint64) ([]transaction, error) {
 	defer s.mutex.RUnlock()
 
 	// merge of the diff
-	ansMap := make(map[string]transaction)
+	ans := []transaction{}
 
 	// get merge of transactions that are present in our journal
 	// NOTICE: we stop early when we cover all the diferences
@@ -54,20 +55,7 @@ func (s *TManager) getDiff(from map[string]uint64) ([]transaction, error) {
 
 		if knownId, idOk := from[tr.Source]; idOk {
 			if knownId < tr.Id {
-				if oldVal, ok := ansMap[tr.Source]; ok {
-					newPatch, pErr := jsonpatch.MergeMergePatches([]byte(tr.Payload), []byte(oldVal.Payload))
-					if pErr != nil {
-						log.Printf("Cannot merge patches: %v", pErr)
-						return []transaction{}, pErr
-					}
-					ansMap[tr.Source] = transaction{
-						Source:  tr.Source,
-						Id:      oldVal.Id,
-						Payload: string(newPatch),
-					}
-				} else {
-					ansMap[tr.Source] = tr
-				}
+				ans = append(ans, tr)
 			} else {
 				done[tr.Source] = true
 
@@ -81,8 +69,12 @@ func (s *TManager) getDiff(from map[string]uint64) ([]transaction, error) {
 		}
  	}
 
+	for i, j := 0, len(ans)-1; i < j; i, j = i+1, j-1 {
+        ans[i], ans[j] = ans[j], ans[i]
+    }
+
 	// decode current snap
-	var cur_snap map[string]string
+	var cur_snap map[string]any
 	uErr := json.Unmarshal(s.snap, &cur_snap)
 	if uErr != nil {
 		log.Printf("Cannot unmarshall snap: %v", uErr)
@@ -92,63 +84,55 @@ func (s *TManager) getDiff(from map[string]uint64) ([]transaction, error) {
 	// create transactions for all the sources incoming clock is not aware of
 	for key, val := range cur_snap {
 		if _, key_ok := from[key]; !key_ok {
-			newPatch, pErr := jsonpatch.CreateMergePatch([]byte("{}"), []byte(val))
-			if pErr != nil {
-				log.Printf("Cannot create patch: %v", pErr)
-				return []transaction{}, pErr
+			jsonVal, mErr := json.Marshal(val)
+			if mErr != nil {
+				log.Printf("Cannot marshal new value for patch: %v", mErr)
+				continue
 			}
-			ansMap[key] = transaction{
+			newPatch := transaction{
 				Source:  key,
 				Id:      s.vclock[key],
-				Payload: string(newPatch),
+				Payload: fmt.Sprintf("[{\"op\": \"add\", \"path\": \"/%v\", \"value\": %v}]", key, jsonVal),
 			}
+			ans = append(ans, newPatch)
 		}
 	}
 
-	ansList := []transaction{}
-	for _, val := range ansMap {
-		ansList = append(ansList, val)
-	}
-
-	return ansList, nil
+	return ans, nil
 }
 
 func (s *TManager) run(in <-chan transaction) error {
 	loop:
 	for t := range in {
 		log.Printf("Working on transaction: %v", t)
+
 		sourceTime, sourceOk := s.vclock[t.Source]
 		if sourceOk && sourceTime > t.Id {
 			continue loop
 		}
 
-		var rawPatch []byte
-		// fix transaction for non-yet-existent client
-		if !sourceOk {
-			// createPatch, cErr := jsonpatch.CreateMergePatch([]byte("{}"), []byte(fmt.Sprintf("{\"%v\": \"\"}", t.Source)))
-			// if cErr != nil {
-			// 	log.Printf("Create merge patch err: %v", cErr)
-			// 	continue loop
-			// }
-			patch1 := []byte(fmt.Sprintf("[{ \"op\": \"add\" , \"path\": \"/%v\" , \"value\": \"\" }]", t.Source))
-			patch2 := []byte(fmt.Sprintf("[{ \"op\": \"replace\" , \"path\": \"/%v\" , \"value\": \"lol\" }]", t.Source))
-			var pErr error = nil
-			rawPatch, pErr = jsonpatch.MergeMergePatches(patch1, patch2)
-			if pErr != nil {
-				log.Printf("Merge merge patch err: %v", pErr)
-				continue loop
-			}
-			log.Printf("get patch: %v", string(rawPatch))
-		} else {
-			rawPatch = []byte(t.Payload)
-		}
-
-		log.Printf("get patch: %v", string(rawPatch))
-
+		rawPatch := []byte(t.Payload)
+		log.Printf("Got patch: %v", string(rawPatch))
 		patch, decErr := jsonpatch.DecodePatch(rawPatch)
 		if decErr != nil {
 			log.Printf("Decode patch err: %v", decErr)
 			continue loop
+		}
+
+		if !sourceOk {
+			addCommand := json.RawMessage("\"add\"")
+			pathCommand := json.RawMessage("\"/" + t.Source + "\"")
+			valueCommand := json.RawMessage("\"\"")
+			patch = append(
+				[]jsonpatch.Operation{
+					map[string]*json.RawMessage{
+						"op": &addCommand,
+						"path": &pathCommand,
+						"value": &valueCommand,
+					},
+				},
+				([]jsonpatch.Operation)(patch)...
+			)
 		}
 
 		s.mutex.Lock()
