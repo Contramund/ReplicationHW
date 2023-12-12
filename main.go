@@ -67,7 +67,7 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 
 func main() {
 	// Parse CMD options
-	addr := *flag.String("p", "127.0.0.1:8080", "set a port for server to run on")
+	addr := *flag.String("p", "localhost:8080", "set a port for server to run on")
 	nickname := *flag.String("n", "Contramund", "set a name for your server in the system")
 	peers := flag.Args()
 

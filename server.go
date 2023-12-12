@@ -6,6 +6,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+
+	"nhooyr.io/websocket"
+	"nhooyr.io/websocket/wsjson"
 )
 
 var (
@@ -22,10 +25,11 @@ func logRequest(req *http.Request, route string) {
 	log.Printf("Incoming command on route '%v'.\nHeaders: %v.\nBody: %v\n\n", route, req.Header, req.Body)
 }
 
-func (cs *replicationServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (rs *replicationServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Incoming request: %v", r.Method)
-	cs.serveMux.ServeHTTP(w, r)
+	rs.serveMux.ServeHTTP(w, r)
 }
+
 // [{"op":"replace", "path":"Contramund","value": []}]
 func getTestHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
@@ -52,7 +56,7 @@ func getVclockHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 
 func getPostHandler(tm *TManager, pipe chan<- transaction, nickname string) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
-		logRequest(req, "/post")
+		logRequest(req, "/replace")
 		localTime := tm.getVClock()[nickname]
 		patch, rErr := io.ReadAll(req.Body)
 		if rErr != nil {
@@ -81,6 +85,18 @@ func getGetHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 func getWsHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, req *http.Request) {
 		logRequest(req, "/ws")
+
+		c, aErr := websocket.Accept(rw, req, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+			OriginPatterns:     []string{"*"},
+		})
+		if aErr != nil {
+			log.Printf("Error accept socket: %v", aErr)
+			rw.WriteHeader(400)
+			return
+		}
+
+
 		pureVClock := req.Header.Get("VClock")
 		var VClockIn map[string]uint64
 
@@ -109,9 +125,13 @@ func getWsHandler(tm *TManager) func(http.ResponseWriter, *http.Request) {
 			return
 		}
 
+		log.Printf("WS ans: \"%v\"", jsonAns)
+
+		wsjson.Write(req.Context(), c, pureAns)
+
 		rw.WriteHeader(200)
-		rw.Header().Set("Content-Type", "application/json")
-		rw.Write(jsonAns)
+		// rw.Header().Set("Content-Type", "application/json")
+		// rw.Write(jsonAns)
 	}
 }
 
@@ -122,7 +142,7 @@ func newReplicationServer(tm *TManager, tmPipe chan<- transaction, nickname stri
 
 	rs.serveMux.HandleFunc("/test", getTestHandler(tm))
 	rs.serveMux.HandleFunc("/vclock", getVclockHandler(tm))
-	rs.serveMux.HandleFunc("/post", getPostHandler(tm, tmPipe, nickname))
+	rs.serveMux.HandleFunc("/replace", getPostHandler(tm, tmPipe, nickname))
 	rs.serveMux.HandleFunc("/get", getGetHandler(tm))
 	rs.serveMux.HandleFunc("/ws", getWsHandler(tm))
 

@@ -7,7 +7,7 @@
         var get = document.getElementById("get");
         get.textContent = await res.text();
 
-        var mySocket = new WebSocket("/ws");
+        var mySocket = new WebSocket(((window.location.protocol === "https:") ? "wss://" : "ws://") + window.location.host + "/ws");
         mySocket.onmessage = async function (event) {
             var output = document.getElementById("output");
             const newDiv = document.createElement("div");

@@ -114,29 +114,41 @@ func (s *TManager) getDiff(from map[string]uint64) ([]transaction, error) {
 }
 
 func (s *TManager) run(in <-chan transaction) error {
+	loop:
 	for t := range in {
+		log.Printf("Working on transaction: %v", t)
 		sourceTime, sourceOk := s.vclock[t.Source]
 		if sourceOk && sourceTime > t.Id {
-			continue
+			continue loop
 		}
 
-		rawPatch := []byte(t.Payload)
+		var rawPatch []byte
 		// fix transaction for non-yet-existent client
 		if !sourceOk {
-			createPatch, cErr := jsonpatch.CreateMergePatch([]byte("{}"), []byte(fmt.Sprintf("{%v:null}", t.Source)))
-			if cErr != nil {
-				return cErr
-			}
-			var pErr error
-			rawPatch, pErr = jsonpatch.MergeMergePatches(createPatch, []byte(t.Payload))
+			// createPatch, cErr := jsonpatch.CreateMergePatch([]byte("{}"), []byte(fmt.Sprintf("{\"%v\": \"\"}", t.Source)))
+			// if cErr != nil {
+			// 	log.Printf("Create merge patch err: %v", cErr)
+			// 	continue loop
+			// }
+			patch1 := []byte(fmt.Sprintf("[{ \"op\": \"add\" , \"path\": \"/%v\" , \"value\": \"\" }]", t.Source))
+			patch2 := []byte(fmt.Sprintf("[{ \"op\": \"replace\" , \"path\": \"/%v\" , \"value\": \"lol\" }]", t.Source))
+			var pErr error = nil
+			rawPatch, pErr = jsonpatch.MergeMergePatches(patch1, patch2)
 			if pErr != nil {
-				return pErr
+				log.Printf("Merge merge patch err: %v", pErr)
+				continue loop
 			}
+			log.Printf("get patch: %v", string(rawPatch))
+		} else {
+			rawPatch = []byte(t.Payload)
 		}
+
+		log.Printf("get patch: %v", string(rawPatch))
 
 		patch, decErr := jsonpatch.DecodePatch(rawPatch)
 		if decErr != nil {
-			return decErr
+			log.Printf("Decode patch err: %v", decErr)
+			continue loop
 		}
 
 		s.mutex.Lock()
@@ -144,7 +156,8 @@ func (s *TManager) run(in <-chan transaction) error {
 			modified, modErr := patch.Apply((*s).snap)
 			if modErr != nil {
 				s.mutex.Unlock()
-				return modErr
+				log.Printf("Apply patch err: %v", modErr)
+				continue loop
 			}
 
 			(*s).snap = modified
