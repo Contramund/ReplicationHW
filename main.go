@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -25,6 +24,8 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 		default:
 		}
 
+		time.Sleep(3 * time.Second)
+
 		vclockIn, mErr := json.Marshal(tm.getVClock())
 		if mErr != nil {
 			log.Printf("Cannot marshall vclock: %v", mErr)
@@ -34,27 +35,22 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 		opts := websocket.DialOptions{
 			HTTPHeader: http.Header{"VClock": []string{string(vclockIn)}},
 		}
-		_, resp, err := websocket.Dial(ctx, "ws://" + peer + "/ws", &opts)
-		if err != nil {
-			log.Printf("Cannot connect to %v: %v", peer, err)
+		c, _, dErr := websocket.Dial(ctx, "ws://" + peer + "/ws", &opts)
+		if dErr != nil {
+			log.Printf("Cannot connect to %v: %v", peer, dErr)
 			time.Sleep(3 * time.Second)
 			// c.CloseNow()
 			continue
 		}
 
-		// process resp
-		if resp.Body == nil {
-			log.Printf("Nil-body response: %v", resp)
+		_, body, rErr := c.Read(ctx)
+		if rErr != nil {
+			log.Printf("Cannot read from websocket %v: %v", peer, rErr)
+			time.Sleep(3 * time.Second)
 			// c.CloseNow()
 			continue
 		}
 
-		body, bErr := io.ReadAll(resp.Body)
-		if bErr != nil {
-			log.Printf("Cannot read body: %v", bErr)
-			// c.CloseNow()
-			continue
-		}
 		var updates []transaction
 		umErr := json.Unmarshal(body, &updates)
 		if umErr != nil {
@@ -63,6 +59,7 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 			continue
 		}
 
+		log.Printf("Got updates: %v", updates)
 		for _, tr := range updates {
 			pipe <- tr
 		}

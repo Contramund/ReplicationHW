@@ -92,7 +92,7 @@ func (s *TManager) getDiff(from map[string]uint64) ([]transaction, error) {
 			newPatch := transaction{
 				Source:  key,
 				Id:      s.vclock[key],
-				Payload: fmt.Sprintf("[{\"op\": \"add\", \"path\": \"/%v\", \"value\": %v}]", key, jsonVal),
+				Payload: fmt.Sprintf("[{\"op\": \"add\", \"path\": \"/%v\", \"value\": %v}]", key, string(jsonVal)),
 			}
 			ans = append(ans, newPatch)
 		}
@@ -110,7 +110,6 @@ func (s *TManager) run(in <-chan transaction) error {
 		if sourceOk && sourceTime > t.Id {
 			continue loop
 		}
-
 		rawPatch := []byte(t.Payload)
 		log.Printf("Got patch: %v", string(rawPatch))
 		patch, decErr := jsonpatch.DecodePatch(rawPatch)
