@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -24,7 +26,8 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 		default:
 		}
 
-		time.Sleep(3 * time.Second)
+		// timeout to save network resources
+		time.Sleep(1 * time.Second)
 
 		vclockIn, mErr := json.Marshal(tm.getVClock())
 		if mErr != nil {
@@ -38,7 +41,6 @@ func runReplicationClient(ctx context.Context, tm *TManager, pipe chan<- transac
 		c, _, dErr := websocket.Dial(ctx, "ws://" + peer + "/ws", &opts)
 		if dErr != nil {
 			log.Printf("Cannot connect to %v: %v", peer, dErr)
-			time.Sleep(3 * time.Second)
 			// c.CloseNow()
 			continue
 		}
@@ -79,9 +81,17 @@ func main() {
 	nickname := *nicknamePtr
 	peers := flag.Args()
 
-	log.Printf("Starting with nickname \"%v\" connecting to ports:\n", nickname)
+	// Setup logger
+	logFile, oErr := os.OpenFile(fmt.Sprintf("%s_%s.log", addr, nickname), os.O_CREATE | os.O_APPEND | os.O_RDWR, 0666)
+	if oErr != nil {
+		log.Fatal("Cannot initialize basic logging file: ", oErr)
+	}
+	mw := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(mw)
+
+	fmt.Printf("Starting with nickname \"%v\" connecting to ports:\n", nickname)
 	for peer := range peers {
-		log.Printf("-> %v", peer)
+		fmt.Printf("-> %v", peer)
 	}
 
 	// Init transaction manager

@@ -111,7 +111,6 @@ func (s *TManager) run(in <-chan transaction) error {
 			continue loop
 		}
 		rawPatch := []byte(t.Payload)
-		log.Printf("Got patch: %v", string(rawPatch))
 		patch, decErr := jsonpatch.DecodePatch(rawPatch)
 		if decErr != nil {
 			log.Printf("Decode patch err: %v", decErr)
@@ -136,6 +135,7 @@ func (s *TManager) run(in <-chan transaction) error {
 
 		s.mutex.Lock()
 		{
+			log.Printf("Applying patch: %v", string(rawPatch))
 			modified, modErr := patch.Apply((*s).snap)
 			if modErr != nil {
 				s.mutex.Unlock()
